@@ -11,6 +11,7 @@ st.title("⚽ Prediction League Tracker")
 @st.cache_data
 def load_data(path):
     df = pd.read_csv(path, parse_dates=["date"])
+    df["date"] = pd.to_datetime(df["date"]).dt.date
     df = df.sort_values(["user", "date"])
     return df
 
@@ -35,7 +36,7 @@ date_range = st.sidebar.date_input(
 )
 
 if len(date_range) == 2:
-    start_date, end_date = pd.to_datetime(date_range[0]), pd.to_datetime(date_range[1])
+    start_date, end_date = date_range[0], date_range[1]
 else:
     start_date, end_date = date_min, date_max
 
