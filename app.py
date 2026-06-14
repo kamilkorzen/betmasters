@@ -41,6 +41,9 @@ if df.empty:
 
 users = sorted(df["user"].unique())
 
+# Calculate daily gains on full dataset before filtering
+df["points_gained"] = df.groupby("user")["cumulative_points"].diff()
+
 # Latest standings (last row per user = latest date)
 latest = df.groupby("user").last().reset_index()
 top_player = latest.sort_values("cumulative_points", ascending=False)["user"].iloc[0]
@@ -85,36 +88,35 @@ line = (
     alt.Chart(filtered)
     .mark_line(point=True)
     .encode(
-        x=alt.X("date:T", title="Date"),
+        x=alt.X("date:T", title="Date", axis=alt.Axis(format="%Y-%m-%d")),
         y=alt.Y("cumulative_points:Q", title="Cumulative points"),
         color=alt.Color("user:N", title="Player"),
         tooltip=["user", alt.Tooltip("date:T", format="%Y-%m-%d"), "cumulative_points:Q"],
     )
-    .properties(height=400)
-    .interactive()
 )
 st.altair_chart(line, use_container_width=True)
 
 # --- 2. Points gained heatmap ---
 st.subheader("🔥 Points gained per round")
-gains = filtered.copy()
-gains["points_gained"] = gains.groupby("user")["cumulative_points"].diff()
-gains = gains.dropna(subset=["points_gained"])
+gains_data = filtered.dropna(subset=["points_gained"]).copy()
+# Convert date to string to force clean formatting on the Ordinal axis
+gains_data["date_str"] = gains_data["date"].apply(lambda x: x.strftime("%Y-%m-%d"))
+
 user_order = standings["user"].tolist()
 
-if not gains.empty:
+if not gains_data.empty:
     hm = (
-        alt.Chart(gains)
+        alt.Chart(gains_data)
         .mark_rect()
         .encode(
-            x=alt.X("date:O", title="Date", axis=alt.Axis(labelAngle=-45)),
-            y=alt.Y("user:N", title="Player", sort=user_order),
+            x=alt.X("date_str:O", title="Date", axis=alt.Axis(labelAngle=-45)),
+            y=alt.Y("user:N", title="Player", sort=user_order, axis=alt.Axis(labelLimit=0)),
             color=alt.Color(
                 "points_gained:Q",
                 title="Points gained",
                 scale=alt.Scale(scheme="yelloworangered"),
             ),
-            tooltip=["user", alt.Tooltip("date:T", format="%Y-%m-%d"), "points_gained:Q"],
+            tooltip=["user", alt.Tooltip("date_str:N", title="Date"), "points_gained:Q"],
         )
         .properties(height=max(300, 24 * len(selected_users)))
     )
@@ -135,7 +137,7 @@ bump = (
     alt.Chart(rank_df)
     .mark_line(point=True, strokeWidth=2)
     .encode(
-        x=alt.X("date:T", title="Date"),
+        x=alt.X("date:T", title="Date", axis=alt.Axis(format="%Y-%m-%d")),
         y=alt.Y(
             "rank:Q",
             title="Position",
@@ -150,8 +152,6 @@ bump = (
             "cumulative_points:Q",
         ],
     )
-    .properties(height=max(350, 22 * n_players))
-    .interactive()
 )
 st.altair_chart(bump, use_container_width=True)
 
@@ -173,17 +173,17 @@ comp["diff_neg"] = comp["diff"].clip(upper=0)
 comp["date"] = pd.to_datetime(comp["date"])
 
 area_pos = alt.Chart(comp).mark_area(opacity=0.35, color="#2ecc71").encode(
-    x=alt.X("date:T", title="Date"),
+    x=alt.X("date:T", title="Date", axis=alt.Axis(format="%Y-%m-%d")),
     y=alt.Y("diff_pos:Q", title=f"Points gap ({player_a} − {player_b})"),
     y2=alt.Y2(datum=0),
 )
 area_neg = alt.Chart(comp).mark_area(opacity=0.35, color="#e74c3c").encode(
-    x="date:T",
+    x=alt.X("date:T", axis=alt.Axis(format="%Y-%m-%d")),
     y="diff_neg:Q",
     y2=alt.Y2(datum=0),
 )
 line_diff = alt.Chart(comp).mark_line(color="#333", strokeWidth=1.5).encode(
-    x="date:T",
+    x=alt.X("date:T", axis=alt.Axis(format="%Y-%m-%d")),
     y="diff:Q",
     tooltip=[alt.Tooltip("date:T", format="%Y-%m-%d"), alt.Tooltip("diff:Q", title="Gap")],
 )
@@ -194,34 +194,34 @@ zero_rule = (
 )
 
 st.caption(f"Green = **{player_a}** ahead · Red = **{player_b}** ahead")
-st.altair_chart((area_pos + area_neg + line_diff + zero_rule).interactive(), use_container_width=True)
+st.altair_chart((area_pos + area_neg + line_diff + zero_rule), use_container_width=True)
 
 # --- 5. Points per match (efficiency) ---
 if not matches_df.empty:
     st.subheader("🎯 Points per match (efficiency)")
-    st.caption("Cumulative points divided by total matches played — the fairest measure of overall quality.")
-    matches_filt = matches_df[
-        (matches_df["date"] >= start_date) & (matches_df["date"] <= end_date)
-    ]
-    ppm = pd.merge(filtered, matches_filt, on="date", how="inner")
-    if not ppm.empty and ppm["matches_played"].max() > 0:
-        ppm["points_per_match"] = ppm["cumulative_points"] / ppm["matches_played"]
+    st.caption("Points gained on a specific date divided by matches played on that date (PPG).")
+    
+    # Merge daily gains with match counts
+    ppm = pd.merge(filtered.dropna(subset=["points_gained"]), matches_df, on="date", how="inner")
+    ppm = ppm[ppm["matches_played"] > 0]
+
+    if not ppm.empty:
+        ppm["ppg"] = ppm["points_gained"] / ppm["matches_played"]
         ppm_chart = (
             alt.Chart(ppm)
             .mark_line(point=True)
             .encode(
-                x=alt.X("date:T", title="Date"),
-                y=alt.Y("points_per_match:Q", title="Points per match"),
+                x=alt.X("date:T", title="Date", axis=alt.Axis(format="%Y-%m-%d")),
+                y=alt.Y("ppg:Q", title="Points per match (PPG)"),
                 color=alt.Color("user:N", title="Player"),
                 tooltip=[
                     "user",
                     alt.Tooltip("date:T", format="%Y-%m-%d"),
-                    alt.Tooltip("points_per_match:Q", format=".2f", title="Pts/match"),
+                    alt.Tooltip("ppg:Q", format=".2f", title="PPG"),
+                    alt.Tooltip("points_gained:Q", title="Points Gained"),
                     alt.Tooltip("matches_played:Q", title="Matches played"),
                 ],
             )
-            .properties(height=400)
-            .interactive()
         )
         st.altair_chart(ppm_chart, use_container_width=True)
 else:
